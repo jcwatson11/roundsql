@@ -1,4 +1,3 @@
-var sql = require('./mssql.js');
 var mssql = require('mssql');
 var q   = require('q');
 
