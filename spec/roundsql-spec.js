@@ -25,7 +25,7 @@ describe('after connecting,', function() {
                     console.log('CONNECTION ERR: ' + err.message);
                 }
                 transaction = new mssql.Transaction(connection);
-                round = new roundsql(transaction);
+                round = new roundsql(mssql,transaction);
                 transaction.begin().then(function() {
                     begun = true;
                     done();
@@ -160,7 +160,7 @@ describe('after connecting,', function() {
                 round.getColumns('A01_AccountMaster').then(function(columns) {
                     var translatedColumns = round.translateColumns(columns);
                     var r = round.generateModel('A01_AccountMaster','Responder', {}, translatedColumns);
-                    expect(Object.keys(r).length).toBe(24);
+                    expect(Object.keys(r).length).toBe(26);
                     expect(r.primaryKey).toBe('RecordId');
                     done();
                 },function(reason) {
@@ -173,7 +173,7 @@ describe('after connecting,', function() {
         it('it knows how to discover a model.',function(done) {
             if(begun) {
                 round.discoverModel('A01_AccountMaster','Responder',{}).then(function(models) {
-                    expect(Object.keys(models.Responder).length).toEqual(24);
+                    expect(Object.keys(models.Responder).length).toEqual(26);
                     expect(models.Responder.primaryKey).toBe('RecordId');
                     done();
                 },function(reason) {
@@ -227,6 +227,46 @@ describe('after connecting,', function() {
             }
         });
 
+        fit('once discovered, a model knows how to delete a model.',function(done) {
+            if(begun) {
+                round.discoverModel('A01_AccountMaster','Responder',{}).then(function(models) {
+                    var r = models.Responder.new();
+                    var strType = 'ACCTNBR';
+                    var strSql = "DECLARE @iNextNumber bigint\n" +
+                        "EXEC [dbo].[X31_NextNumberBusinessDataSingleValueByType] @strType=N'"+strType+"',@iNextNumber=@iNextNumber OUTPUT\n" +
+                        "SELECT @INextNumber as N'NextNumber'";
+                    round.query(strSql).then(function(results) {
+                        var nextNumber = results[0].NextNumber;
+                        r.AccountNumber = nextNumber;
+                        r.FirstName = 'TESTJON';
+                        r.LastName  = 'TESTWATSON';
+                        r.AccountType = 'I';
+                        r.FamilyConsolidate = 0;
+                        r.AllowTransactions = 1;
+                        r.Status = 'A';
+                        r.save().then(function(responder) {
+                            expect(responder.RecordId).toBeInteger();
+                            responder.delete().then(function() {
+                                expect(responder.RecordId).toBeNull();
+                                done();
+                            },function(reason) {
+                                console.dir(reason);
+                                done();
+                            });
+                        },function(reason) {
+                            console.dir(reason);
+                            done();
+                        });
+                    },function(reason) {
+                        console.dir(reason);
+                        done();
+                    });
+                },function(reason) {
+                    console.log('DBERROR: ' , reason);
+                    done();
+                });
+            }
+        });
     });
 
 });

@@ -19,7 +19,7 @@ var roundsql = require('roundsql');
 // ... set up mssql with configurations and a transaction.
 
 transaction.begin().then(function() {
-    var round = new roundsql(transaction);
+    var round = new roundsql(mssql,transaction);
     round.discoverModel('tablename','ModleName',{}).then(function(models) {
         var r = models.ModleName.new();
         models.ModleName.findAll({'id':{'value':13}}).then(function(results) {

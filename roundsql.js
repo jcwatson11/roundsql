@@ -1,7 +1,9 @@
-var mssql = require('mssql');
-var q   = require('q');
+module.exports = function roundsql(mssql,connection) {
 
-module.exports = function roundsql(connection) {
+    /**
+     * Using promises
+     */
+    var q   = require('q');
 
     /**
      * Returns a promise that gets fulfilled with a recordset full of table column details.
@@ -268,6 +270,23 @@ module.exports = function roundsql(connection) {
     };
     this.getNextUniqueId = getNextUniqueId;
 
+    var whereIsValidForQuery = function(where) {
+        for(var i in where) {
+            if( where[i] !== null && typeof where[i] != 'object') {
+                return "value of where."+i+" is not an object";
+            }
+            var keys = Object.keys(where[i]);
+            if(keys.indexOf('value') == -1) {
+                return "Where clause "+i+" does not have a value property.";
+            }
+            if(keys.indexOf('type') == -1) {
+                return "Where clause "+i+" does not have a type property.";
+            }
+        }
+        return true;
+    };
+    this.whereIsValidForQuery = whereIsValidForQuery;
+
     /**
      * Execute a query with bound parameters. If there are no bound parameters,
      * the query will be run without a prepared statement.
@@ -282,6 +301,11 @@ module.exports = function roundsql(connection) {
      */
     var query = function(strSql,params) {
         var deferred = q.defer();
+        var result = whereIsValidForQuery(params);
+        if(result !== true ) {
+            deferred.reject(result);
+            return deferred.promise;
+        }
         var ps = new mssql.PreparedStatement(connection);
         setPreparedStatementInputs(ps,params);
         var psWhere = getWhereForPreparedStatement(params);
@@ -400,6 +424,8 @@ module.exports = function roundsql(connection) {
 
             var self = this;
 
+            this.modelName = modelName;
+
             this.columns = cols;
 
             this.primaryKey = null;
@@ -415,7 +441,7 @@ module.exports = function roundsql(connection) {
             /**
              * Reference to roundsql instance for help.
              */
-            var round = new roundsql(connection);
+            var round = new roundsql(mssql,connection);
 
             /**
              * Hydrates this object with values provided.
@@ -447,7 +473,8 @@ module.exports = function roundsql(connection) {
              * @return new model instance
              */
             this.new = function() {
-                return new modelConstructor(connection,cols);
+                var ret = new modelConstructor(connection,cols);
+                return ret;
             };
 
             /**
@@ -456,21 +483,20 @@ module.exports = function roundsql(connection) {
              * @param where object following the format:
              *
              */
-            var whereIsValid = function(where) {
+            var whereIsValidForModel = function(where) {
+                var result = whereIsValidForQuery(where);
+                if(result !== true) return result;
                 if( !cols ) {
                     return "columns is "+typeof cols+".";
                 }
                 for(var i in where) {
-                    if( where[i] !== null && typeof where[i] != 'object') {
-                        return "value of where."+i+" is not an object";
-                    }
                     if(typeof cols[i] == 'undefined') {
                         return "Field "+i+" is not a valid field in the table schema.";
                     }
                 }
                 return true;
             };
-            this.whereIsValid = whereIsValid;
+            this.whereIsValidForModel = whereIsValidForModel;
 
             /**
              * In order for the prepared statement process to work, all parameters must have
@@ -499,7 +525,7 @@ module.exports = function roundsql(connection) {
             var findAll = function(where, limit) {
                 var deferred = q.defer();
                 if(!where) where = {};
-                var result = whereIsValid(where);
+                var result = whereIsValidForModel(where);
                 if(result !== true ) {
                     deferred.reject(result);
                     return deferred.promise;
@@ -619,13 +645,43 @@ module.exports = function roundsql(connection) {
                 } else {
                     var params = getInsertUpdateParams(true);
                     var strSql = getUpdateQuery();
-                    query(strSql,params).then(function() {},function(reason) {
+                    query(strSql,params).then(function() {
+                        deferred.resolve(self);
+                    },function(reason) {
                         deferred.reject(reason.message);
                     });
                 }
                 return deferred.promise;
             };
             this.save = save;
+
+            /**
+             * Deletes a record from the model's table in the database.
+             *
+             * @return promise that resolves to true
+             * promise is rejected if the record has no primary key value
+             */
+            var del = function() {
+                var deferred = q.defer();
+                if(!self[this.primaryKey]) {
+                    deferred.reject(this.modelName + " has no primary key value. Cannot delete.");
+                } else {
+                    var strSql = "DELETE FROM " + tableName + " WHERE [" + self.primaryKey + "] = @" + self.primaryKey;
+                    var params = {};
+                    params[self.primaryKey] = {
+                        'value':self[self.primaryKey]
+                        ,'type':cols[self.primaryKey].type
+                    };
+                    query(strSql,params).then(function() {
+                        self.RecordId = null;
+                        deferred.resolve(true);
+                    },function(reason) {
+                        deferred.reject(reason);
+                    });
+                }
+                return deferred.promise;
+            };
+            this.delete = del;
 
         };
         return new modelConstructor(connection,columns);
