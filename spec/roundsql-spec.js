@@ -227,7 +227,7 @@ describe('after connecting,', function() {
             }
         });
 
-        fit('once discovered, a model knows how to delete a model.',function(done) {
+        it('once discovered, a model knows how to delete a model.',function(done) {
             if(begun) {
                 round.discoverModel('A01_AccountMaster','Responder',{}).then(function(models) {
                     var r = models.Responder.new();

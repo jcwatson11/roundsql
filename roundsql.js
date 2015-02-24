@@ -511,9 +511,11 @@ module.exports = function roundsql(mssql,connection) {
              */
             var addTypesToWhere = function(where) {
                 for(var i in where) {
+                    if(!cols[i]) continue;
                     where[i].type = cols[i].type;
                 }
             };
+            this.addTypesToWhere = addTypesToWhere;
 
             /**
              * Returns a promise that gets fulfilled with an array of Responder objects
@@ -525,6 +527,7 @@ module.exports = function roundsql(mssql,connection) {
             var findAll = function(where, limit) {
                 var deferred = q.defer();
                 if(!where) where = {};
+                addTypesToWhere(where);
                 var result = whereIsValidForModel(where);
                 if(result !== true ) {
                     deferred.reject(result);
@@ -535,7 +538,6 @@ module.exports = function roundsql(mssql,connection) {
                 var strWHERE = (Object.keys(where).length > 0) ? 'WHERE':'';
                 var strSql = "SELECT TOP " +limit+ " * FROM ["+tableName+"] "+strWHERE+" " + round.parseWhere(where);
 
-                addTypesToWhere(where);
                 // This also returns a promise. So let it.
                 round.query(strSql,where).then(function(results) {
                     var hydratedResults = hydrate(results,cols);
