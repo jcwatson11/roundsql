@@ -334,8 +334,14 @@ module.exports = function roundsql(mssql,connection) {
     var getSqlServerNativeDataType = function(coldef) {
         switch(coldef.DATA_TYPE) {
             case 'varchar':
+                if(coldef.CHARACTER_MAXIMUM_LENGTH == -1) {
+                    return mssql.VarChar(mssql.MAX);
+                }
                 return mssql.VarChar(parseInt(coldef.CHARACTER_MAXIMUM_LENGTH));
             case 'nvarchar':
+                if(coldef.CHARACTER_MAXIMUM_LENGTH == -1) {
+                    return mssql.NVarChar(mssql.MAX);
+                }
                 return mssql.NVarChar(parseInt(coldef.CHARACTER_MAXIMUM_LENGTH));
             case 'char':
                 return mssql.Char(parseInt(coldef.CHARACTER_MAXIMUM_LENGTH));
@@ -358,6 +364,9 @@ module.exports = function roundsql(mssql,connection) {
             case 'decimal':
                 return mssql.Decimal(parseInt(coldef.NUMERIC_PRECISION), parseInt(coldef.NUMERIC_SCALE));
             case 'varbinary':
+                if(coldef.CHARACTER_MAXIMUM_LENGTH == -1) {
+                    return mssql.VarBinary(mssql.MAX);
+                }
                 return mssql.VarBinary(parseInt(coldef.CHARACTER_OCTET_LENGTH));
             case 'smallint':
                 return mssql.SmallInt;
@@ -423,6 +432,16 @@ module.exports = function roundsql(mssql,connection) {
         var modelConstructor = function(connection,cols) {
 
             var self = this;
+
+            this.debug = false;
+
+            /**
+             * Sets the debug mode for roundsql. If bSetting is true, then queries and their
+             * bindings will be output to the console.
+             */
+            this.setDebug = function(bSetting) {
+                self.debug = bSetting;
+            };
 
             this.modelName = modelName;
 
@@ -637,20 +656,28 @@ module.exports = function roundsql(mssql,connection) {
                 if(!this[this.primaryKey]) {
                     var params = getInsertUpdateParams();
                     var strSql = getInsertQuery();
+                    if(self.debug) {
+                        console.log(strSql);
+                        console.dir(params);
+                    }
                     query(strSql,params).then(function(results) {
                         self[self.primaryKey] = results[0][self.primaryKey];
                         deferred.resolve(self);
                     },function(reason) {
-                        deferred.reject(reason.message);
+                        deferred.reject(reason);
                     });
                 // UPDATING
                 } else {
                     var params = getInsertUpdateParams(true);
                     var strSql = getUpdateQuery();
+                    if(self.debug) {
+                        console.log(strSql);
+                        console.dir(params);
+                    }
                     query(strSql,params).then(function() {
                         deferred.resolve(self);
                     },function(reason) {
-                        deferred.reject(reason.message);
+                        deferred.reject(reason);
                     });
                 }
                 return deferred.promise;
@@ -703,6 +730,10 @@ module.exports = function roundsql(mssql,connection) {
         var deferred = q.defer();
         var models = [];
         getColumns(tableName).then(function(cols) {
+            if(cols.length == 0) {
+                deferred.reject('No column data returned for table ['+tableName+']. Perhaps you misspelled the name of the table?');
+                return;
+            }
             var translatedColumns = translateColumns(cols);
             if(Array.isArray(tableName)) {
                 if(!Array.isArray(modelName)) {
