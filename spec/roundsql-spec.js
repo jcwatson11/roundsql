@@ -25,7 +25,7 @@ describe('after connecting,', function() {
                     console.log('CONNECTION ERR: ' + err.message);
                 }
                 transaction = new mssql.Transaction(connection);
-                round = new roundsql(transaction);
+                round = new roundsql(transaction,roundsqlconfig);
                 transaction.begin().then(function() {
                     begun = true;
                     done();

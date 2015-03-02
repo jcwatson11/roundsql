@@ -1,7 +1,9 @@
 var mssql = require('mssql');
 var q   = require('q');
 
-module.exports = function roundsql(connection) {
+module.exports = function roundsql(connection,config) {
+
+    var round = this;
 
     /**
      * Returns a promise that gets fulfilled with a recordset full of table column details.
@@ -224,51 +226,6 @@ module.exports = function roundsql(connection) {
     };
 
     /**
-     * Returns the rather cryptic "NextNumber" ID code name
-     *
-     * @param strTableName string name of table you want to know the next number ID
-     *        code name for
-     */
-    var getNextNumberIdNameByTableName = function(strTableName) {
-        var ref = {
-             'Q03_ImportMaster'   : 'ECOMMIMPID'
-            ,'Q04_ImportDetails'  : 'ECOMMIDTID'
-            ,'A03_AddressMaster'  : 'ADDRESSID'
-            ,'A10_AccountPledges' : 'PLEDGEID'
-            ,'A01_AccountMaster'  : 'ACCTNBR'
-        };
-        return ref[strTableName];
-    };
-    this.getNextNumberIdNameByTableName = getNextNumberIdNameByTableName;
-
-    /**
-     * Returns the next number for the secondary primary key for a given table.
-     * Yes. I know tables shouldn't have a secondary primary key. Good luck telling
-     * Donor Direct that. Maybe the next database they design will have a measure
-     * of sanity after you talk to them.
-     *
-     * @param strTableName string name of the table you want to get the next number for.
-     * @return promise that resolves with an integer ID
-     */
-    var getNextUniqueId = function(strTableName) {
-        var strType = getNextNumberIdNameByTableName(strTableName);
-        var deferred = q.defer();
-        var request = new mssql.Request(connection);
-        var work = function() {
-            var strSql = "DECLARE @iNextNumber bigint\n" +
-                "EXEC [dbo].[X31_NextNumberBusinessDataSingleValueByType] @strType=N'"+strType+"',@iNextNumber=@iNextNumber OUTPUT\n" +
-                "SELECT @INextNumber as N'NextNumber'";
-            request.query(strSql,function(err,resultset) {
-                if(dbHadError(err,deferred,connection)) return;
-                deferred.resolve(resultset[0].NextNumber);
-            });
-        };
-        work();
-        return deferred.promise;
-    };
-    this.getNextUniqueId = getNextUniqueId;
-
-    /**
      * Execute a query with bound parameters. If there are no bound parameters,
      * the query will be run without a prepared statement.
      *
@@ -398,24 +355,38 @@ module.exports = function roundsql(connection) {
     var generateModel = function(tableName, modelName, config, columns) {
         var modelConstructor = function(connection,cols) {
 
+            /**
+             * Apply all config items to this model.
+             */
+            for(var i in config) {
+                this[i] = config[i];
+            }
+
+            /**
+             * Maintain scope separation even while in sub-scopes with a reference
+             * to self instead of this.
+             */
             var self = this;
 
+            /**
+             * Local copy of column data to cary round after model discovery
+             */
             this.columns = cols;
 
+            /**
+             * Keep track of the primary key
+             */
             this.primaryKey = null;
 
+            /**
+             * Find the primary key from the column data and record it
+             */
             for(var i in cols) {
                 this[i] = null;
                 if(cols[i].primaryKey) {
                     this.primaryKey = i;
                 }
             }
-
-
-            /**
-             * Reference to roundsql instance for help.
-             */
-            var round = new roundsql(connection);
 
             /**
              * Hydrates this object with values provided.
