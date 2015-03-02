@@ -1,6 +1,6 @@
 {
   "name": "roundsql",
-  "version": "0.0.1",
+  "version": "0.0.4",
   "description": "CRUD with Model Discovery for MS SQL Server",
   "main": "roundsql.js",
   "scripts": {
@@ -8,7 +8,7 @@
   },
   "dependencies": {
     "mssql": "latest",
-    "q"    : "~1.1"
+    "q": "~1.1"
   },
   "repository": {
     "type": "git",
@@ -24,11 +24,16 @@
     "CRUD"
   ],
   "author": "Jon Watson",
-  "licenses": [{
-    "type": "MIT",
-    "url": "http://opensource.org/licenses/mit-license.php"
-  }],
+  "licenses": [
+    {
+      "type": "MIT",
+      "url": "http://opensource.org/licenses/mit-license.php"
+    }
+  ],
   "bugs": {
     "url": "https://github.com/jcwatson11/roundsql/issues"
+  },
+  "devDependencies": {
+    "jasmine-utils": "^0.2.0"
   }
 }

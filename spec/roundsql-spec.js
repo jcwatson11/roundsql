@@ -25,7 +25,7 @@ describe('after connecting,', function() {
                     console.log('CONNECTION ERR: ' + err.message);
                 }
                 transaction = new mssql.Transaction(connection);
-                round = new roundsql(transaction,roundsqlconfig);
+                round = new roundsql(mssql,transaction);
                 transaction.begin().then(function() {
                     begun = true;
                     done();
@@ -160,7 +160,7 @@ describe('after connecting,', function() {
                 round.getColumns('A01_AccountMaster').then(function(columns) {
                     var translatedColumns = round.translateColumns(columns);
                     var r = round.generateModel('A01_AccountMaster','Responder', {}, translatedColumns);
-                    expect(Object.keys(r).length).toBe(24);
+                    expect(Object.keys(r).length).toBe(30);
                     expect(r.primaryKey).toBe('RecordId');
                     done();
                 },function(reason) {
@@ -173,7 +173,7 @@ describe('after connecting,', function() {
         it('it knows how to discover a model.',function(done) {
             if(begun) {
                 round.discoverModel('A01_AccountMaster','Responder',{}).then(function(models) {
-                    expect(Object.keys(models.Responder).length).toEqual(24);
+                    expect(Object.keys(models.Responder).length).toEqual(30);
                     expect(models.Responder.primaryKey).toBe('RecordId');
                     done();
                 },function(reason) {
@@ -188,7 +188,7 @@ describe('after connecting,', function() {
                 round.discoverModel('A01_AccountMaster','Responder',{}).then(function(models) {
                     models.Responder.findAll().then(function(results) {
                         var r1 = results[0];
-                        expect(r1.getInsertQuery()).toBe("INSERT INTO [A01_AccountMaster] ([AccountNumber],[FamilyId],[AccountType],[FamilyMemberType],[FamilyConsolidate],[AllowTransactions],[Title],[FirstName],[MiddleName],[LastName],[Suffix],[OrganizationName],[Status]) VALUES (@AccountNumber, @FamilyId, @AccountType, @FamilyMemberType, @FamilyConsolidate, @AllowTransactions, @Title, @FirstName, @MiddleName, @LastName, @Suffix, @OrganizationName, @Status);\nSELECT SCOPE_IDENTITY() AS RecordId;");
+                        expect(r1.getInsertQuery()).toBe("INSERT INTO [A01_AccountMaster] ([AccountNumber],[FamilyId],[AccountType],[FamilyMemberType],[FamilyConsolidate],[AllowTransactions],[Title],[FirstName],[MiddleName],[LastName],[Suffix],[OrganizationName],[Status]) VALUES (@AccountNumber, @FamilyId, @AccountType, @FamilyMemberType, @FamilyConsolidate, @AllowTransactions, @Title, @FirstName, @MiddleName, @LastName, @Suffix, @OrganizationName, @Status);\nSELECT SCOPE_IDENTITY() AS RecordId;\n");
                         var expectedParams = '{"AccountNumber":{"value":"40872580"},"FamilyId":{"value":"0"},"AccountType":{"value":"I","type":{"length":10}},"FamilyMemberType":{"value":"","type":{"length":10}},"FamilyConsolidate":{"value":true},"AllowTransactions":{"value":true},"Title":{"value":"","type":{"length":20}},"FirstName":{"value":"Manfh","type":{"length":20}},"MiddleName":{"value":"","type":{"length":20}},"LastName":{"value":"Babladi","type":{"length":20}},"Suffix":{"value":"","type":{"length":20}},"OrganizationName":{"value":"","type":{"length":70}},"Status":{"value":"A","type":{"length":1}}}';
                         var actualParams = r1.getInsertUpdateParams();
                         var actualStringParams = JSON.stringify(actualParams);
@@ -227,6 +227,46 @@ describe('after connecting,', function() {
             }
         });
 
+        it('once discovered, a model knows how to delete a model.',function(done) {
+            if(begun) {
+                round.discoverModel('A01_AccountMaster','Responder',{}).then(function(models) {
+                    var r = models.Responder.new();
+                    var strType = 'ACCTNBR';
+                    var strSql = "DECLARE @iNextNumber bigint\n" +
+                        "EXEC [dbo].[X31_NextNumberBusinessDataSingleValueByType] @strType=N'"+strType+"',@iNextNumber=@iNextNumber OUTPUT\n" +
+                        "SELECT @INextNumber as N'NextNumber'";
+                    round.query(strSql).then(function(results) {
+                        var nextNumber = results[0].NextNumber;
+                        r.AccountNumber = nextNumber;
+                        r.FirstName = 'TESTJON';
+                        r.LastName  = 'TESTWATSON';
+                        r.AccountType = 'I';
+                        r.FamilyConsolidate = 0;
+                        r.AllowTransactions = 1;
+                        r.Status = 'A';
+                        r.save().then(function(responder) {
+                            expect(responder.RecordId).toBeInteger();
+                            responder.delete().then(function() {
+                                expect(responder.RecordId).toBeNull();
+                                done();
+                            },function(reason) {
+                                console.dir(reason);
+                                done();
+                            });
+                        },function(reason) {
+                            console.dir(reason);
+                            done();
+                        });
+                    },function(reason) {
+                        console.dir(reason);
+                        done();
+                    });
+                },function(reason) {
+                    console.log('DBERROR: ' , reason);
+                    done();
+                });
+            }
+        });
     });
 
 });

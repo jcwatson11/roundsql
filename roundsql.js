@@ -1,26 +1,44 @@
-var mssql = require('mssql');
-var q   = require('q');
+module.exports = function roundsql(mssql,connection) {
 
-module.exports = function roundsql(connection,config) {
+    /**
+     * Using promises
+     */
+    var q   = require('q');
 
-    var round = this;
+    /**
+     * Returns the SQL statemnet used to get column meta data while discovering the model.
+     *
+     * @table array of string table names or string single table name.
+     *
+     * @return string SQL statement used to get columns
+     */
+    var getColumnsSql = function(table) {
+        var strSql = "SELECT c.*, tc.CONSTRAINT_TYPE FROM INFORMATION_SCHEMA.COLUMNS c\n" +
+                     " LEFT OUTER JOIN INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE ccu\n" +
+                     "    ON c.TABLE_NAME = ccu.TABLE_NAME\n" +
+                     "    AND ccu.COLUMN_NAME = c.COLUMN_NAME\n" +
+                     " LEFT OUTER JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc\n" +
+                     "    ON c.TABLE_NAME = tc.TABLE_NAME\n" +
+                     "    AND tc.CONSTRAINT_NAME = ccu.CONSTRAINT_NAME \n" +
+                     " WHERE\n" +
+                     "    c.TABLE_NAME \n";
+        if(Array.isArray(table)) {
+            strSql += ' IN (\'' + table.join('\',\'') + '\')';
+        } else {
+            strSql += ' = N\''+table+'\'';
+        }
+        return strSql;
+    };
+    this.getColumnsSql = getColumnsSql;
 
     /**
      * Returns a promise that gets fulfilled with a recordset full of table column details.
      *
-     * @param table string table name
+     * @param table array of string table names or string table name
      * @return promise fulfilled with recordset of table column detail rows
      */
     var getColumns = function(table) {
-        var strSql = 'SELECT c.*, tc.CONSTRAINT_TYPE FROM INFORMATION_SCHEMA.COLUMNS c' +
-                     ' LEFT OUTER JOIN INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE ccu' +
-                     '    ON c.TABLE_NAME = ccu.TABLE_NAME' +
-                     '    AND ccu.COLUMN_NAME = c.COLUMN_NAME' +
-                     ' LEFT OUTER JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc' +
-                     '    ON c.TABLE_NAME = tc.TABLE_NAME' +
-                     '    AND tc.CONSTRAINT_NAME = ccu.CONSTRAINT_NAME ' +
-                     ' WHERE' +
-                     '    c.TABLE_NAME = N\''+table+'\'';
+        strSql = getColumnsSql(table);
         return query(strSql);
     };
     this.getColumns = getColumns;
@@ -225,6 +243,23 @@ module.exports = function roundsql(connection,config) {
         return deferred.promise;
     };
 
+    var whereIsValidForQuery = function(where) {
+        for(var i in where) {
+            if( where[i] !== null && typeof where[i] != 'object') {
+                return "value of where."+i+" is not an object";
+            }
+            var keys = Object.keys(where[i]);
+            if(keys.indexOf('value') == -1) {
+                return "Where clause "+i+" does not have a value property.";
+            }
+            if(keys.indexOf('type') == -1) {
+                return "Where clause "+i+" does not have a type property.";
+            }
+        }
+        return true;
+    };
+    this.whereIsValidForQuery = whereIsValidForQuery;
+
     /**
      * Execute a query with bound parameters. If there are no bound parameters,
      * the query will be run without a prepared statement.
@@ -239,6 +274,11 @@ module.exports = function roundsql(connection,config) {
      */
     var query = function(strSql,params) {
         var deferred = q.defer();
+        var result = whereIsValidForQuery(params);
+        if(result !== true ) {
+            deferred.reject(result);
+            return deferred.promise;
+        }
         var ps = new mssql.PreparedStatement(connection);
         setPreparedStatementInputs(ps,params);
         var psWhere = getWhereForPreparedStatement(params);
@@ -267,8 +307,14 @@ module.exports = function roundsql(connection,config) {
     var getSqlServerNativeDataType = function(coldef) {
         switch(coldef.DATA_TYPE) {
             case 'varchar':
+                if(coldef.CHARACTER_MAXIMUM_LENGTH == -1) {
+                    return mssql.VarChar(mssql.MAX);
+                }
                 return mssql.VarChar(parseInt(coldef.CHARACTER_MAXIMUM_LENGTH));
             case 'nvarchar':
+                if(coldef.CHARACTER_MAXIMUM_LENGTH == -1) {
+                    return mssql.NVarChar(mssql.MAX);
+                }
                 return mssql.NVarChar(parseInt(coldef.CHARACTER_MAXIMUM_LENGTH));
             case 'char':
                 return mssql.Char(parseInt(coldef.CHARACTER_MAXIMUM_LENGTH));
@@ -291,6 +337,9 @@ module.exports = function roundsql(connection,config) {
             case 'decimal':
                 return mssql.Decimal(parseInt(coldef.NUMERIC_PRECISION), parseInt(coldef.NUMERIC_SCALE));
             case 'varbinary':
+                if(coldef.CHARACTER_MAXIMUM_LENGTH == -1) {
+                    return mssql.VarBinary(mssql.MAX);
+                }
                 return mssql.VarBinary(parseInt(coldef.CHARACTER_OCTET_LENGTH));
             case 'smallint':
                 return mssql.SmallInt;
@@ -352,254 +401,303 @@ module.exports = function roundsql(connection,config) {
     };
     this.translateColumns = translateColumns;
 
-    var generateModel = function(tableName, modelName, config, columns) {
-        var modelConstructor = function(connection,cols) {
 
-            /**
-             * Apply all config items to this model.
-             */
-            for(var i in config) {
-                this[i] = config[i];
+    var modelConstructor = function(connection,cols,tableName,modelName) {
+
+        this.debug = false;
+
+        /**
+         * Sets the debug mode for roundsql. If bSetting is true, then queries and their
+         * bindings will be output to the console.
+         */
+        this.setDebug = function(bSetting) {
+            self.debug = bSetting;
+        };
+
+        this.tableName = tableName;
+        this.modelName = modelName;
+
+        this.columns = cols;
+
+        this.primaryKey = null;
+
+        for(var i in cols) {
+            this[i] = null;
+            if(cols[i].primaryKey) {
+                this.primaryKey = i;
             }
+        }
 
-            /**
-             * Maintain scope separation even while in sub-scopes with a reference
-             * to self instead of this.
-             */
-            var self = this;
+        var self = this;
 
-            /**
-             * Local copy of column data to cary round after model discovery
-             */
-            this.columns = cols;
+        /**
+         * Reference to roundsql instance for help.
+         */
+        var round = new roundsql(mssql,connection);
 
-            /**
-             * Keep track of the primary key
-             */
-            this.primaryKey = null;
+        /**
+         * Hydrates this object with values provided.
+         *
+         * @param obj object with values to hydrate into this responder object
+         */
+        var hydrate = function(obj,cols) {
+            if(Array.isArray(obj)) {
+                var ret = [];
+                for(var i=0;i<obj.length;i++) {
+                    var r = new modelConstructor(connection,cols,self.tableName,self.modelName);
+                    r.hydrate(obj[i],cols);
+                    ret.push(r);
+                }
+                return ret;
+            } else {
+                for(var i in obj) {
+                    this[i] = obj[i];
+                }
+                return this;
+            }
+        };
+        this.hydrate = hydrate;
 
-            /**
-             * Find the primary key from the column data and record it
-             */
+
+        /**
+         * Never create a new model any other way than using this method!
+         *
+         * @return new model instance
+         */
+        this.new = function() {
+            var ret = new modelConstructor(connection,cols,self.tableName,self.modelName);
+            return ret;
+        };
+
+        /**
+         * Returns true if all of the columns in the where object are valid; false otherwise.
+         *
+         * @param where object following the format:
+         *
+         */
+        var whereIsValidForModel = function(where) {
+            var result = whereIsValidForQuery(where);
+            if(result !== true) return result;
+            if( !cols ) {
+                return "columns is "+typeof cols+".";
+            }
+            for(var i in where) {
+                if(typeof cols[i] == 'undefined') {
+                    return "Field "+i+" is not a valid field in the table schema.";
+                }
+            }
+            return true;
+        };
+        this.whereIsValidForModel = whereIsValidForModel;
+
+        /**
+         * In order for the prepared statement process to work, all parameters must have
+         * a type. Luckily, we should already have column data by this point to tell us
+         * what type to use.
+         *
+         * @param where object defining parameters in format:
+         * {
+         *     'FirstName': {value:'Jon'}
+         *     ,'LastName': {operator: '<>', value:'Watson'}
+         * }
+         */
+        var addTypesToWhere = function(where) {
+            for(var i in where) {
+                if(!cols[i]) continue;
+                where[i].type = cols[i].type;
+            }
+        };
+        this.addTypesToWhere = addTypesToWhere;
+
+        /**
+         * Returns a promise that gets fulfilled with an array of Responder objects
+         *
+         * @param where object with property value pairs representing field names and values
+         *        you want to serach for.
+         * @return promise fulfilled with array of Responder objects
+         */
+        var findAll = function(where, limit) {
+            var deferred = q.defer();
+            if(!where) where = {};
+            addTypesToWhere(where);
+            var result = whereIsValidForModel(where);
+            if(result !== true ) {
+                deferred.reject(result);
+                return deferred.promise;
+            }
+            if(!limit) limit = 10;
+            limit = parseInt(limit);
+            var strWHERE = (Object.keys(where).length > 0) ? 'WHERE':'';
+            var strSql = "SELECT TOP " +limit+ " * FROM ["+self.tableName+"] "+strWHERE+" " + round.parseWhere(where);
+
+            // This also returns a promise. So let it.
+            round.query(strSql,where).then(function(results) {
+                var hydratedResults = hydrate(results,cols);
+                deferred.resolve(hydratedResults);
+            },function(reason) {
+                deferred.reject(reason);
+            });
+            return deferred.promise;
+        };
+        this.findAll = findAll;
+
+        /**
+         * Returns an array of string field names from the columns array
+         *
+         * @param strPrefix string optional prefix to prefix each name with.
+         *        Useful for creating binding parameter names
+         * @return array of string column names
+         */
+        function getInsertUpdateFieldNamesAsArray(strPrefix) {
+            var ret = [];
+            if(!strPrefix) strPrefix = '';
             for(var i in cols) {
-                this[i] = null;
-                if(cols[i].primaryKey) {
-                    this.primaryKey = i;
-                }
+                if(i == self.primaryKey) continue;
+                ret.push(strPrefix + i);
             }
+            return ret;
+        }
 
-            /**
-             * Hydrates this object with values provided.
-             *
-             * @param obj object with values to hydrate into this responder object
-             */
-            var hydrate = function(obj) {
-                if(Array.isArray(obj)) {
-                    var ret = [];
-                    for(var i=0;i<obj.length;i++) {
-                        var r = new modelConstructor(connection,cols);
-                        r.hydrate(obj[i],columns);
-                        ret.push(r);
-                    }
-                    return ret;
-                } else {
-                    for(var i in obj) {
-                        this[i] = obj[i];
-                    }
-                    return this;
+        /**
+         * Returns an array of objects suitable for use in creating insert/update
+         * statements
+         *
+         * @return array of objects with format:
+         *    {'value':'SomeValue','type':TYPE}
+         *    where TYPE is the mssql native data type.
+         */
+        var getInsertUpdateParams = function(bUpdating,strNamePrefix) {
+            var ret = {};
+            for(var i in cols) {
+                if(self.primaryKey == i) {
+                    continue;
                 }
-            };
-            this.hydrate = hydrate;
+                var strName = (typeof strNamePrefix != 'undefined') ? strNamePrefix+i:i;
+                ret[strName] = {'value':self[i],'type':cols[i].type};
+            }
+            if(bUpdating) {
+                ret[this.primaryKey] = {'value':self[this.primaryKey],'type':cols[self.primaryKey].type};
+            }
+            return ret;
+        };
+        this.getInsertUpdateParams = getInsertUpdateParams;
 
-
-            /**
-             * Never create a new model any other way than using this method!
-             *
-             * @return new model instance
-             */
-            this.new = function() {
-                return new modelConstructor(connection,cols);
-            };
-
-            /**
-             * Returns true if all of the columns in the where object are valid; false otherwise.
-             *
-             * @param where object following the format:
-             *
-             */
-            var whereIsValid = function(where) {
-                if( !cols ) {
-                    return "columns is "+typeof cols+".";
+        /**
+         * Returns a string SQL Insert statement for inserting this object.
+         *
+         * @return string INSERT statement.
+         */
+        var getInsertQuery = function(bOmitSelectScopeIdentity,strParamPrefix) {
+            var aFields   = getInsertUpdateFieldNamesAsArray();
+            var strPrefix = '@';
+            if(typeof strParamPrefix != 'undefined') strPrefix += strParamPrefix;
+            var aBindings = getInsertUpdateFieldNamesAsArray(strPrefix);
+            var strRet = "INSERT INTO ["
+                +self.tableName
+                +"] (["
+                +aFields.join('],[')
+                +"]) VALUES ("
+                +aBindings.join(', ')
+                +");\n";
+                if(!bOmitSelectScopeIdentity) {
+                    strRet += "SELECT SCOPE_IDENTITY() AS "+self.primaryKey+";\n";
                 }
-                for(var i in where) {
-                    if( where[i] !== null && typeof where[i] != 'object') {
-                        return "value of where."+i+" is not an object";
-                    }
-                    if(typeof cols[i] == 'undefined') {
-                        return "Field "+i+" is not a valid field in the table schema.";
-                    }
-                }
-                return true;
-            };
-            this.whereIsValid = whereIsValid;
+                return strRet;
+        };
+        this.getInsertQuery = getInsertQuery;
 
-            /**
-             * In order for the prepared statement process to work, all parameters must have
-             * a type. Luckily, we should already have column data by this point to tell us
-             * what type to use.
-             *
-             * @param where object defining parameters in format:
-             * {
-             *     'FirstName': {value:'Jon'}
-             *     ,'LastName': {operator: '<>', value:'Watson'}
-             * }
-             */
-            var addTypesToWhere = function(where) {
-                for(var i in where) {
-                    where[i].type = cols[i].type;
-                }
-            };
+        /**
+         * Returns a string SQL Update statement for inserting this object.
+         *
+         * @return string UPDATE statement
+         */
+        var getUpdateQuery = function() {
+            var aFields   = getInsertUpdateFieldNamesAsArray();
+            var aBindings = getInsertUpdateFieldNamesAsArray('@');
+            var strSql    = "UPDATE ["+self.tableName+"] SET ";
+            var aSets     = [];
+            for(var i=0;i<aFields.length;i++) {
+                if(aFields[i] == this.primaryKey) continue;
+                aSets.push("[" + aFields[i] + "] = " + aBindings[i]);
+            }
+            strSql += aSets.join(', ');
+            strSql += " WHERE ["+this.primaryKey+"] = @" + this.primaryKey;
+            return strSql;
+        };
+        this.getUpdateQuery = getUpdateQuery;
 
-            /**
-             * Returns a promise that gets fulfilled with an array of Responder objects
-             *
-             * @param where object with property value pairs representing field names and values
-             *        you want to serach for.
-             * @return promise fulfilled with array of Responder objects
-             */
-            var findAll = function(where, limit) {
-                var deferred = q.defer();
-                if(!where) where = {};
-                var result = whereIsValid(where);
-                if(result !== true ) {
-                    deferred.reject(result);
-                    return deferred.promise;
+        /**
+         * Ueses the table schema to generate INSERT and UPDATE statements for saving a record.
+         *
+         * @return promise fulfilled with a responder object.
+         */
+        var save = function() {
+            var deferred = q.defer();
+            // INSERTING
+            if(!this[this.primaryKey]) {
+                var params = getInsertUpdateParams();
+                var strSql = getInsertQuery();
+                if(self.debug) {
+                    console.log(strSql);
+                    console.dir(params);
                 }
-                if(!limit) limit = 10;
-                limit = parseInt(limit);
-                var strWHERE = (Object.keys(where).length > 0) ? 'WHERE':'';
-                var strSql = "SELECT TOP " +limit+ " * FROM ["+tableName+"] "+strWHERE+" " + round.parseWhere(where);
-
-                addTypesToWhere(where);
-                // This also returns a promise. So let it.
-                round.query(strSql,where).then(function(results) {
-                    var hydratedResults = hydrate(results,cols);
-                    deferred.resolve(hydratedResults);
+                query(strSql,params).then(function(results) {
+                    self[self.primaryKey] = results[0][self.primaryKey];
+                    deferred.resolve(self);
                 },function(reason) {
                     deferred.reject(reason);
                 });
-                return deferred.promise;
-            };
-            this.findAll = findAll;
-
-            /**
-             * Returns an array of string field names from the columns array
-             *
-             * @param strPrefix string optional prefix to prefix each name with.
-             *        Useful for creating binding parameter names
-             * @return array of string column names
-             */
-            function getInsertUpdateFieldNamesAsArray(strPrefix) {
-                var ret = [];
-                if(!strPrefix) strPrefix = '';
-                for(var i in cols) {
-                    if(i == self.primaryKey) continue;
-                    ret.push(strPrefix + i);
+            // UPDATING
+            } else {
+                var params = getInsertUpdateParams(true);
+                var strSql = getUpdateQuery();
+                if(self.debug) {
+                    console.log(strSql);
+                    console.dir(params);
                 }
-                return ret;
+                query(strSql,params).then(function() {
+                    deferred.resolve(self);
+                },function(reason) {
+                    deferred.reject(reason);
+                });
             }
-
-            /**
-             * Returns an array of objects suitable for use in creating insert/update
-             * statements
-             *
-             * @return array of objects with format:
-             *    {'value':'SomeValue','type':TYPE}
-             *    where TYPE is the mssql native data type.
-             */
-            var getInsertUpdateParams = function(bUpdating) {
-                var ret = {};
-                for(var i in cols) {
-                    if(this.primaryKey == i) continue;
-                    ret[i] = {'value':self[i],'type':cols[i].type};
-                }
-                if(bUpdating) {
-                    ret[this.primaryKey] = {'value':self[this.primaryKey],'type':cols[self.primaryKey].type};
-                }
-                return ret;
-            };
-            this.getInsertUpdateParams = getInsertUpdateParams;
-
-            /**
-             * Returns a string SQL Insert statement for inserting this object.
-             *
-             * @return string INSERT statement.
-             */
-            var getInsertQuery = function() {
-                var aFields   = getInsertUpdateFieldNamesAsArray();
-                var aBindings = getInsertUpdateFieldNamesAsArray('@');
-                return "INSERT INTO ["
-                    +tableName
-                    +"] (["
-                    +aFields.join('],[')
-                    +"]) VALUES ("
-                    +aBindings.join(', ')
-                    +");\n"
-                    +"SELECT SCOPE_IDENTITY() AS "+self.primaryKey+";";
-            };
-            this.getInsertQuery = getInsertQuery;
-
-            /**
-             * Returns a string SQL Update statement for inserting this object.
-             *
-             * @return string UPDATE statement
-             */
-            var getUpdateQuery = function() {
-                var aFields   = getInsertUpdateFieldNamesAsArray();
-                var aBindings = getInsertUpdateFieldNamesAsArray('@');
-                var strSql    = "UPDATE ["+tableName+"] SET ";
-                var aSets     = [];
-                for(var i=0;i<aFields.length;i++) {
-                    if(aFields[i] == this.primaryKey) continue;
-                    aSets.push("[" + aFields[i] + "] = " + aBindings[i]);
-                }
-                strSql += aSets.join(', ');
-                strSql += " WHERE ["+this.primaryKey+"] = @" + this.primaryKey;
-                return strSql;
-            };
-            this.getUpdateQuery = getUpdateQuery;
-
-            /**
-             * Ueses the table schema to generate INSERT and UPDATE statements for saving a record.
-             *
-             * @return promise fulfilled with a responder object.
-             */
-            var save = function() {
-                var deferred = q.defer();
-                // INSERTING
-                if(!this[this.primaryKey]) {
-                    var params = getInsertUpdateParams();
-                    var strSql = getInsertQuery();
-                    query(strSql,params).then(function(results) {
-                        self[self.primaryKey] = results[0][self.primaryKey];
-                        deferred.resolve(self);
-                    },function(reason) {
-                        deferred.reject(reason.message);
-                    });
-                // UPDATING
-                } else {
-                    var params = getInsertUpdateParams(true);
-                    var strSql = getUpdateQuery();
-                    query(strSql,params).then(function() {},function(reason) {
-                        deferred.reject(reason.message);
-                    });
-                }
-                return deferred.promise;
-            };
-            this.save = save;
-
+            return deferred.promise;
         };
-        return new modelConstructor(connection,columns);
+        this.save = save;
+
+        /**
+         * Deletes a record from the model's table in the database.
+         *
+         * @return promise that resolves to true
+         * promise is rejected if the record has no primary key value
+         */
+        var del = function() {
+            var deferred = q.defer();
+            if(!self[this.primaryKey]) {
+                deferred.reject(this.modelName + " has no primary key value. Cannot delete.");
+            } else {
+                var strSql = "DELETE FROM " + self.tableName + " WHERE [" + self.primaryKey + "] = @" + self.primaryKey;
+                var params = {};
+                params[self.primaryKey] = {
+                    'value':self[self.primaryKey]
+                    ,'type':cols[self.primaryKey].type
+                };
+                query(strSql,params).then(function() {
+                    self.RecordId = null;
+                    deferred.resolve(true);
+                },function(reason) {
+                    deferred.reject(reason);
+                });
+            }
+            return deferred.promise;
+        };
+        this.delete = del;
+
+    };
+    this.modelConstructor = modelConstructor;
+
+    var generateModel = function(tableName, modelName, config, columns) {
+        return new modelConstructor(connection,columns,tableName,modelName);
     };
     this.generateModel = generateModel;
 
@@ -616,6 +714,10 @@ module.exports = function roundsql(connection,config) {
         var deferred = q.defer();
         var models = [];
         getColumns(tableName).then(function(cols) {
+            if(cols.length == 0) {
+                deferred.reject('No column data returned for table ['+tableName+']. Perhaps you misspelled the name of the table?');
+                return;
+            }
             var translatedColumns = translateColumns(cols);
             if(Array.isArray(tableName)) {
                 if(!Array.isArray(modelName)) {
