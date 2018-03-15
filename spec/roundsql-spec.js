@@ -13,9 +13,9 @@ describe('after connecting,', function() {
         var config = {
             user: process.env.DMS_US_USER
            ,password: process.env.DMS_US_PASS
-           ,server: process.env.DMS_US_PROTRACTOR_HOST
+           ,server: process.env.DMS_US_HOST
            ,database: process.env.DMS_US_DBNAME
-           ,port: process.env.DMS_US_PROTRACTOR_PORT
+           ,port: process.env.DMS_US_PORT
         };
 
 
