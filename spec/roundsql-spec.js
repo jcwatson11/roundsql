@@ -1,6 +1,8 @@
+'use strict';
 var mssql       = require('mssql');
 var jasminUtils = require('jasmine-utils');
-var roundsql    = require('../roundsql.js');
+var RoundSql    = require('../roundsql.js');
+var Model       = require('../model.js');
 
 describe('after connecting,', function() {
 
@@ -25,7 +27,7 @@ describe('after connecting,', function() {
                     console.log('CONNECTION ERR: ' + err.message);
                 }
                 transaction = new mssql.Transaction(connection);
-                round = new roundsql(mssql,transaction);
+                round = new RoundSql(mssql,transaction);
                 transaction.begin().then(function() {
                     begun = true;
                     done();
@@ -159,8 +161,8 @@ describe('after connecting,', function() {
             if(begun) {
                 round.getColumns('A01_AccountMaster').then(function(columns) {
                     var translatedColumns = round.translateColumns(columns);
-                    var r = round.generateModel('A01_AccountMaster','Responder', {}, translatedColumns);
-                    expect(Object.keys(r).length).toBe(30);
+                    var r = round.generateModel('A01_AccountMaster','Responder', translatedColumns);
+                    expect(Object.keys(r).length).toBe(22);
                     expect(r.primaryKey).toBe('RecordId');
                     done();
                 },function(reason) {
@@ -172,8 +174,8 @@ describe('after connecting,', function() {
 
         it('it knows how to discover a model.',function(done) {
             if(begun) {
-                round.discoverModel('A01_AccountMaster','Responder',{}).then(function(models) {
-                    expect(Object.keys(models.Responder).length).toEqual(30);
+                round.discoverModel('A01_AccountMaster','Responder').then(function(models) {
+                    expect(Object.keys(models.Responder).length).toEqual(22);
                     expect(models.Responder.primaryKey).toBe('RecordId');
                     done();
                 },function(reason) {
@@ -185,7 +187,7 @@ describe('after connecting,', function() {
 
         it('once discovered, a model knows how to construct an insert query to save a model.',function(done) {
             if(begun) {
-                round.discoverModel('A01_AccountMaster','Responder',{}).then(function(models) {
+                round.discoverModel('A01_AccountMaster','Responder').then(function(models) {
                     models.Responder.findAll().then(function(results) {
                         var r1 = results[0];
                         expect(r1.getInsertQuery()).toBe("INSERT INTO [A01_AccountMaster] ([AccountNumber],[FamilyId],[AccountType],[FamilyMemberType],[FamilyConsolidate],[AllowTransactions],[Title],[FirstName],[MiddleName],[LastName],[Suffix],[OrganizationName],[Status]) VALUES (@AccountNumber, @FamilyId, @AccountType, @FamilyMemberType, @FamilyConsolidate, @AllowTransactions, @Title, @FirstName, @MiddleName, @LastName, @Suffix, @OrganizationName, @Status);\nSELECT SCOPE_IDENTITY() AS RecordId;\n");
@@ -207,7 +209,7 @@ describe('after connecting,', function() {
 
         it('once discovered, a model knows how to construct an update query to save a model.',function(done) {
             if(begun) {
-                round.discoverModel('A01_AccountMaster','Responder',{}).then(function(models) {
+                round.discoverModel('A01_AccountMaster','Responder').then(function(models) {
                     models.Responder.findAll().then(function(results) {
                         var r1 = results[0];
                         expect(r1.getUpdateQuery()).toBe('UPDATE [A01_AccountMaster] SET [AccountNumber] = @AccountNumber, [FamilyId] = @FamilyId, [AccountType] = @AccountType, [FamilyMemberType] = @FamilyMemberType, [FamilyConsolidate] = @FamilyConsolidate, [AllowTransactions] = @AllowTransactions, [Title] = @Title, [FirstName] = @FirstName, [MiddleName] = @MiddleName, [LastName] = @LastName, [Suffix] = @Suffix, [OrganizationName] = @OrganizationName, [Status] = @Status WHERE [RecordId] = @RecordId');
@@ -229,13 +231,17 @@ describe('after connecting,', function() {
 
         it('once discovered, a model knows how to delete a model.',function(done) {
             if(begun) {
-                round.discoverModel('A01_AccountMaster','Responder',{}).then(function(models) {
+                var doneError = ((done, reason) => {
+                    console.log(reason);
+                    done();
+                }).bind(this, done);
+                round.discoverModel('A01_AccountMaster','Responder').then(((done, doneError, models) => {
                     var r = models.Responder.new();
                     var strType = 'ACCTNBR';
                     var strSql = "DECLARE @iNextNumber bigint\n" +
                         "EXEC [dbo].[X31_NextNumberBusinessDataSingleValueByType] @strType=N'"+strType+"',@iNextNumber=@iNextNumber OUTPUT\n" +
                         "SELECT @INextNumber as N'NextNumber'";
-                    round.query(strSql).then(function(results) {
+                    round.query(strSql).then(((done, doneError, r, results) => {
                         var nextNumber = results[0].NextNumber;
                         r.AccountNumber = nextNumber;
                         r.FirstName = 'TESTJON';
@@ -244,27 +250,15 @@ describe('after connecting,', function() {
                         r.FamilyConsolidate = 0;
                         r.AllowTransactions = 1;
                         r.Status = 'A';
-                        r.save().then(function(responder) {
+                        r.save().then(((done, doneError, responder) => {
                             expect(responder.RecordId).toBeInteger();
-                            responder.delete().then(function() {
+                            responder.del().then(((done, doneError) =>{
                                 expect(responder.RecordId).toBeNull();
                                 done();
-                            },function(reason) {
-                                console.dir(reason);
-                                done();
-                            });
-                        },function(reason) {
-                            console.dir(reason);
-                            done();
-                        });
-                    },function(reason) {
-                        console.dir(reason);
-                        done();
-                    });
-                },function(reason) {
-                    console.log('DBERROR: ' , reason);
-                    done();
-                });
+                            }).bind(this, done, doneError), doneError).catch(doneError);
+                        }).bind(this, done, doneError), doneError).catch(doneError);
+                    }).bind(this, done, doneError, r), doneError).catch(doneError);
+                }).bind(this, done, doneError), doneError).catch(doneError);
             }
         });
     });
