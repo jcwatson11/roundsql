@@ -274,11 +274,43 @@ class RoundSql {
             deferred.reject(result);
             return deferred.promise;
         }
+        var psWhere = this.getWhereForPreparedStatement(params);
+        // If there are bound parameters, the query should be prepared and
+        // executed.
+        if(Object.keys(psWhere).length > 0) {
+            this.runPreparedStatement(strSql, params, psWhere, deferred);
+        } else {
+            this.runSimpleQuery(strSql, deferred);
+        }
+        return deferred.promise;
+    }
+
+    /**
+     * Helper for query() function
+     * Runs a simple query with no bindings and resolves
+     * @param  {[type]} strSql   [description]
+     * @param  {[type]} deferred [description]
+     * @return {[type]}          [description]
+     */
+    runSimpleQuery(strSql, deferred) {
+        var request = new this.mssql.Request(this.connection);
+        request.query(strSql)
+        .then((recordset) => {
+            if(recordset && recordset.length > 0) {
+                deferred.resolve(recordset);
+            } else {
+                deferred.resolve(request.rowsAffected);
+            }
+        },deferred.reject)
+        .catch(deferred.reject);
+    }
+
+    runPreparedStatement(strSql, params, bindings, deferred) {
         var ps = new this.mssql.PreparedStatement(this.connection);
         this.setPreparedStatementInputs(ps,params);
-        var psWhere = this.getWhereForPreparedStatement(params);
-        ps.prepare(strSql).then(((deferred) => {
-            ps.execute(psWhere,((deferred, err, recordset) => {
+        ps.prepare(strSql).then(
+            ((deferred) => {
+            ps.execute(bindings,((deferred, err, recordset) => {
                 if(err) {
                     deferred.reject(err.message);
                 } else {
@@ -289,7 +321,6 @@ class RoundSql {
         }).bind(this, deferred),((deferred, reason) => {
             deferred.reject(reason);
         }).bind(this, deferred));
-        return deferred.promise;
     }
 
     /**
