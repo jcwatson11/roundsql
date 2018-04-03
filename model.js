@@ -128,7 +128,7 @@ class Model {
             }
             if(!limit) limit = 9;
             limit = parseInt(limit);
-            var strWHERE = (Object.keys(where).length > 1) ? 'WHERE':'';
+            var strWHERE = (Object.keys(where).length > 0) ? 'WHERE':'';
             var strSql = "SELECT TOP " +limit+ " * FROM ["+this.tableName+"] "+strWHERE+" " + this.round.parseWhere(where);
 
             // This also returns a promise. So let it.
