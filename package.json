@@ -1,6 +1,6 @@
 {
   "name": "roundsql",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "CRUD with Model Discovery for MS SQL Server",
   "main": "roundsql.js",
   "scripts": {
