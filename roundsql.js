@@ -369,11 +369,11 @@ class RoundSql {
             case 'smallint':
                 return this.mssql.SmallInt;
             case 'smalldatetime':
-                return this.mssql.SmallDateTime;
+                return this.mssql.NVarChar(30);
             case 'datetime':
-                return this.mssql.DateTime;
+                return this.mssql.NVarChar(30);
             case 'datetime2':
-                return this.mssql.DateTime2(parseInt(coldef.NUMERIC_SCALE));
+                return this.mssql.NVarChar(30);
             case 'time':
                 return this.mssql.Time(parseInt(coldef.NUMERIC_SCALE));
             case 'datetimeoffset':
@@ -387,7 +387,7 @@ class RoundSql {
             case 'float':
                 return this.mssql.Float;
             case 'date':
-                return this.mssql.Date;
+                return this.mssql.NVarChar(30);
             case 'text':
                 return this.mssql.Text;
             case 'ntext':
